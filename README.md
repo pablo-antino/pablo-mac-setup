@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/pablo-antino/pablo-mac-setup/main/s
 
 No necesitas `git clone`, `cd`, `chmod`, `git pull` ni iniciar sesion en GitHub.
 
-El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya esta instalado y reintenta lo pendiente.
+El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya esta instalado, repara instalaciones incompletas y reintenta lo pendiente.
 
 ## Que hace automaticamente
 
@@ -21,11 +21,13 @@ El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya 
 - Instala y configura Homebrew si hace falta.
 - Descarga siempre el Brewfile actual desde GitHub, para no usar configuraciones locales antiguas.
 - Corrige automaticamente `onedrive-cli` si una version anterior lo instalo por error.
-- Detecta que aplicaciones ya estan instaladas.
-- Instala todas las aplicaciones pendientes dentro de un unico proceso de Homebrew.
+- Verifica cada aplicacion por su `.app` real en `/Applications`, no solo por el registro de Homebrew.
+- Si Homebrew dice que un cask esta instalado pero falta su `.app`, ejecuta `brew reinstall --cask` automaticamente.
+- Instala las aplicaciones que realmente faltan.
 - Mantiene Homebrew en primer plano para que los prompts de `sudo` puedan leer la contrasena correctamente.
 - Fuerza las descargas de Homebrew a una por una para reducir fallos con descargas grandes de Microsoft.
 - Ejecuta el indicador de progreso en segundo plano y evita imprimirlo mientras `sudo` esta esperando la contrasena.
+- Hace una verificacion fisica final de todas las aplicaciones antes de declarar el setup completado.
 - Aplica las preferencias de macOS.
 
 ## Contrasena de administrador
@@ -46,6 +48,23 @@ Homebrew se ejecuta en primer plano durante la instalacion para conservar el con
 - Figma
 - Tailscale
 - ChatGPT
+
+## Verificacion fisica
+
+El setup espera encontrar estas aplicaciones en `/Applications`:
+
+- `/Applications/NordVPN.app`
+- `/Applications/Microsoft Word.app`
+- `/Applications/Microsoft Excel.app`
+- `/Applications/Microsoft PowerPoint.app`
+- `/Applications/Microsoft Outlook.app`
+- `/Applications/OneDrive.app`
+- `/Applications/Pearcleaner.app`
+- `/Applications/Figma.app`
+- `/Applications/Tailscale.app`
+- `/Applications/ChatGPT.app`
+
+Si falta una de estas rutas aunque Homebrew tenga el cask registrado, el setup la considera incompleta y la reinstala.
 
 ## Configura macOS
 
