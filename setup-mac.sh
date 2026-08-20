@@ -9,6 +9,28 @@
 set -u
 set -o pipefail
 
+RAW_BASE="https://raw.githubusercontent.com/pablo-antino/pablo-mac-setup/main"
+TEMP_BREWFILE=""
+FAILED_APPS=()
+
+cleanup() {
+  if [[ -n "$TEMP_BREWFILE" && -f "$TEMP_BREWFILE" ]]; then
+    rm -f "$TEMP_BREWFILE"
+  fi
+}
+
+on_interrupt() {
+  echo ""
+  echo "Instalacion interrumpida."
+  echo "Homebrew queda configurado en ~/.zprofile."
+  echo "Para usar brew en esta misma Terminal, ejecuta:"
+  echo "  source ~/.zprofile"
+  exit 130
+}
+
+trap cleanup EXIT
+trap on_interrupt INT TERM
+
 echo ""
 echo "========================================"
 echo "          PABLO MAC SETUP"
@@ -33,7 +55,7 @@ if ! xcode-select -p >/dev/null 2>&1; then
   xcode-select --install || true
   echo ""
   echo "Completa la instalacion de Xcode Command Line Tools"
-  echo "y luego vuelve a ejecutar este script."
+  echo "y luego vuelve a ejecutar este mismo setup."
   exit 0
 fi
 
@@ -41,67 +63,134 @@ fi
 # 2. Homebrew
 # ------------------------------------------------------------
 
-if ! command -v brew >/dev/null 2>&1; then
+find_brew() {
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    BREW_BIN="/opt/homebrew/bin/brew"
+    return 0
+  fi
+
+  if [[ -x /usr/local/bin/brew ]]; then
+    BREW_BIN="/usr/local/bin/brew"
+    return 0
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    BREW_BIN="$(command -v brew)"
+    return 0
+  fi
+
+  return 1
+}
+
+if ! find_brew; then
   echo "Instalando Homebrew..."
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+  if ! find_brew; then
+    echo "ERROR: No se encontro Homebrew despues de la instalacion."
+    exit 1
+  fi
 fi
 
-if [[ -x /opt/homebrew/bin/brew ]]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-  BREW_SHELLENV='eval "$(/opt/homebrew/bin/brew shellenv)"'
-elif [[ -x /usr/local/bin/brew ]]; then
-  eval "$(/usr/local/bin/brew shellenv)"
-  BREW_SHELLENV='eval "$(/usr/local/bin/brew shellenv)"'
-else
-  echo "ERROR: No se encontro Homebrew despues de la instalacion."
-  exit 1
-fi
+# Cargar Homebrew inmediatamente para este proceso.
+eval "$("$BREW_BIN" shellenv)"
 
+# Persistir Homebrew para futuras sesiones de Terminal.
+BREW_PROFILE_LINE="eval \"\$($BREW_BIN shellenv)\""
 touch "$HOME/.zprofile"
-if ! grep -Fq 'brew shellenv' "$HOME/.zprofile"; then
-  echo "$BREW_SHELLENV" >> "$HOME/.zprofile"
+if ! grep -Fqx "$BREW_PROFILE_LINE" "$HOME/.zprofile"; then
+  print -r -- "$BREW_PROFILE_LINE" >> "$HOME/.zprofile"
 fi
+
+# Evitar que cada instalacion vuelva a ejecutar brew update.
+export HOMEBREW_NO_AUTO_UPDATE=1
+
+echo ""
+echo "Homebrew listo: $($BREW_BIN --version | head -n 1)"
+echo "Para usar brew en esta misma Terminal si interrumpes el setup:"
+echo "  source ~/.zprofile"
 
 echo ""
 echo "Actualizando Homebrew..."
-brew update
+"$BREW_BIN" update
 
 # ------------------------------------------------------------
-# 3. Aplicaciones (Brewfile)
+# 3. Localizar Brewfile
 # ------------------------------------------------------------
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BREWFILE="$SCRIPT_DIR/Brewfile"
+SCRIPT_DIR="${0:A:h}"
 
-if [[ ! -f "$BREWFILE" ]]; then
-  echo "ERROR: No se encontro el Brewfile en $SCRIPT_DIR."
+if [[ -f "$SCRIPT_DIR/Brewfile" ]]; then
+  BREWFILE="$SCRIPT_DIR/Brewfile"
+elif [[ -f "$PWD/Brewfile" ]]; then
+  BREWFILE="$PWD/Brewfile"
+else
+  echo ""
+  echo "Brewfile no encontrado localmente. Descargando desde GitHub..."
+  TEMP_BREWFILE="$(mktemp /tmp/pablo-brewfile.XXXXXX)"
+
+  if ! curl -fsSL "$RAW_BASE/Brewfile" -o "$TEMP_BREWFILE"; then
+    echo "ERROR: No se pudo descargar el Brewfile desde GitHub."
+    exit 1
+  fi
+
+  BREWFILE="$TEMP_BREWFILE"
+fi
+
+# ------------------------------------------------------------
+# 4. Instalar aplicaciones una por una
+# ------------------------------------------------------------
+
+CASKS=("${(@f)$(sed -n 's/^[[:space:]]*cask "\([^"]*\)".*/\1/p' "$BREWFILE")}")
+
+if (( ${#CASKS[@]} == 0 )); then
+  echo "ERROR: El Brewfile no contiene aplicaciones cask."
   exit 1
 fi
 
 echo ""
-echo "Instalando aplicaciones desde Brewfile..."
-brew bundle --file="$BREWFILE"
+echo "Instalando aplicaciones..."
+echo "Se mostrara el detalle de cada instalacion."
+
+for app in "${CASKS[@]}"; do
+  echo ""
+  echo "----------------------------------------"
+  echo "Procesando: $app"
+  echo "----------------------------------------"
+
+  if "$BREW_BIN" list --cask "$app" >/dev/null 2>&1; then
+    echo "OK: $app ya esta instalado."
+    continue
+  fi
+
+  echo "Instalando $app..."
+  if "$BREW_BIN" install --cask "$app" --verbose; then
+    echo "OK: $app instalado."
+  else
+    echo "AVISO: No se pudo instalar $app. Continuando con las demas apps."
+    FAILED_APPS+=("$app")
+  fi
+done
 
 # ------------------------------------------------------------
-# 4. Finder
+# 5. Finder
 # ------------------------------------------------------------
 
 echo ""
 echo "Configurando Finder..."
-
 defaults write NSGlobalDomain AppleShowAllExtensions -bool true
 defaults write com.apple.finder ShowPathbar -bool true
 defaults write com.apple.finder ShowStatusBar -bool true
 
 # ------------------------------------------------------------
-# 5. Dock
+# 6. Dock
 # ------------------------------------------------------------
 
 echo "Configurando Dock..."
 defaults write com.apple.dock autohide -bool true
 
 # ------------------------------------------------------------
-# 6. Barra de menus
+# 7. Barra de menus
 # ------------------------------------------------------------
 
 echo "Configurando barra de menus..."
@@ -109,7 +198,7 @@ defaults write NSGlobalDomain _HIHideMenuBar -bool true
 defaults write NSGlobalDomain AppleMenuBarVisibleInFullscreen -bool false
 
 # ------------------------------------------------------------
-# 7. Trackpad
+# 8. Trackpad
 # ------------------------------------------------------------
 
 echo "Configurando trackpad..."
@@ -121,7 +210,7 @@ defaults -currentHost write NSGlobalDomain com.apple.trackpad.trackpadCornerClic
 defaults -currentHost write NSGlobalDomain com.apple.trackpad.enableSecondaryClick -bool true
 
 # ------------------------------------------------------------
-# 8. Teclado: U.S. International
+# 9. Teclado: U.S. International
 # ------------------------------------------------------------
 
 echo "Configurando teclado U.S. International..."
@@ -222,26 +311,25 @@ fi
 rm -f "$TMP_SOURCE" "$TMP_BINARY"
 
 # ------------------------------------------------------------
-# 9. Recargar preferencias
+# 10. Recargar preferencias
 # ------------------------------------------------------------
 
 echo ""
 echo "Aplicando cambios..."
-
 killall Finder 2>/dev/null || true
 killall Dock 2>/dev/null || true
 killall SystemUIServer 2>/dev/null || true
 killall cfprefsd 2>/dev/null || true
 
 # ------------------------------------------------------------
-# 10. Limpieza
+# 11. Limpieza
 # ------------------------------------------------------------
 
 echo "Limpiando Homebrew..."
-brew cleanup
+"$BREW_BIN" cleanup
 
 # ------------------------------------------------------------
-# 11. Resumen
+# 12. Resumen
 # ------------------------------------------------------------
 
 echo ""
@@ -257,18 +345,17 @@ echo "  - Trackpad: click secundario abajo a la derecha"
 echo "  - Teclado: U.S. International"
 echo "  - Screenshots: SIN CAMBIOS"
 echo ""
-echo "Aplicaciones:"
-echo "  - NordVPN"
-echo "  - Word"
-echo "  - Excel"
-echo "  - PowerPoint"
-echo "  - Outlook"
-echo "  - OneDrive"
-echo "  - Pearcleaner"
-echo "  - Figma"
-echo "  - Tailscale"
-echo "  - ChatGPT"
-echo ""
+
+if (( ${#FAILED_APPS[@]} > 0 )); then
+  echo "Aplicaciones que no se pudieron instalar:"
+  for app in "${FAILED_APPS[@]}"; do
+    echo "  - $app"
+  done
+  echo ""
+else
+  echo "Todas las aplicaciones se instalaron correctamente."
+  echo ""
+fi
 
 echo "Despues inicia sesion donde corresponda:"
 echo "  - Microsoft 365 / Outlook / OneDrive"
@@ -276,6 +363,10 @@ echo "  - NordVPN"
 echo "  - Tailscale"
 echo "  - Figma"
 echo "  - ChatGPT"
+echo ""
+echo "Homebrew quedo agregado a ~/.zprofile."
+echo "Si esta Terminal aun no reconoce brew, ejecuta:"
+echo "  source ~/.zprofile"
 echo ""
 echo "Si algun ajuste de trackpad o barra de menus no aparece"
 echo "inmediatamente, cierra sesion o reinicia la Mac."
