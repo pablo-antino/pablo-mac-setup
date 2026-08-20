@@ -105,6 +105,10 @@ fi
 # Evitar que cada instalacion vuelva a ejecutar brew update.
 export HOMEBREW_NO_AUTO_UPDATE=1
 
+# Reintentar descargas cuando el CDN corta una conexion grande.
+# Homebrew usa 3 reintentos por defecto; para este setup usamos 8.
+export HOMEBREW_CURL_RETRIES=8
+
 echo ""
 echo "Homebrew listo: $($BREW_BIN --version | head -n 1)"
 echo "Para usar brew en esta misma Terminal si interrumpes el setup:"
