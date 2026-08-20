@@ -252,12 +252,37 @@ defaults write NSGlobalDomain AppleMenuBarVisibleInFullscreen -bool false
 
 # Trackpad
 echo "Configurando trackpad..."
+
+# Trackpad integrado: clic secundario en la esquina inferior derecha.
 defaults write com.apple.AppleMultitouchTrackpad TrackpadCornerSecondaryClick -int 2
 defaults write com.apple.AppleMultitouchTrackpad TrackpadRightClick -bool true
+defaults -currentHost write com.apple.AppleMultitouchTrackpad TrackpadCornerSecondaryClick -int 2
+defaults -currentHost write com.apple.AppleMultitouchTrackpad TrackpadRightClick -bool true
+
+# Trackpads Bluetooth / externos.
 defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadCornerSecondaryClick -int 2
 defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadRightClick -bool true
+defaults -currentHost write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadCornerSecondaryClick -int 2
+defaults -currentHost write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadRightClick -bool true
+
+# Preferencias globales que macOS consulta para el gesto de clic secundario.
+defaults write NSGlobalDomain com.apple.trackpad.trackpadCornerClickBehavior -int 1
+defaults write NSGlobalDomain com.apple.trackpad.enableSecondaryClick -bool true
 defaults -currentHost write NSGlobalDomain com.apple.trackpad.trackpadCornerClickBehavior -int 1
 defaults -currentHost write NSGlobalDomain com.apple.trackpad.enableSecondaryClick -bool true
+
+# Forzar recarga de preferencias del usuario antes de continuar.
+killall cfprefsd 2>/dev/null || true
+sleep 1
+
+# Verificacion basica de las claves principales.
+TRACKPAD_CORNER="$(defaults read NSGlobalDomain com.apple.trackpad.trackpadCornerClickBehavior 2>/dev/null || echo 0)"
+TRACKPAD_SECONDARY="$(defaults read NSGlobalDomain com.apple.trackpad.enableSecondaryClick 2>/dev/null || echo 0)"
+if [[ "$TRACKPAD_CORNER" == "1" && "$TRACKPAD_SECONDARY" == "1" ]]; then
+  echo "OK: clic secundario configurado en la esquina inferior derecha."
+else
+  echo "AVISO: macOS no confirmo el ajuste de clic secundario."
+fi
 
 # Teclado: U.S. International
 echo "Configurando teclado U.S. International..."
