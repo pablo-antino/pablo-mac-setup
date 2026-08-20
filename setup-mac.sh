@@ -12,12 +12,12 @@ set -o pipefail
 RAW_BASE="https://raw.githubusercontent.com/pablo-antino/pablo-mac-setup/main"
 TEMP_BREWFILE=""
 FAILED_APPS=()
-ACTIVE_PID=""
+HEARTBEAT_PID=""
 
 cleanup() {
-  if [[ -n "$ACTIVE_PID" ]] && kill -0 "$ACTIVE_PID" 2>/dev/null; then
-    kill "$ACTIVE_PID" 2>/dev/null || true
-    wait "$ACTIVE_PID" 2>/dev/null || true
+  if [[ -n "$HEARTBEAT_PID" ]] && kill -0 "$HEARTBEAT_PID" 2>/dev/null; then
+    kill "$HEARTBEAT_PID" 2>/dev/null || true
+    wait "$HEARTBEAT_PID" 2>/dev/null || true
   fi
 
   if [[ -n "$TEMP_BREWFILE" && -f "$TEMP_BREWFILE" ]]; then
@@ -27,11 +27,10 @@ cleanup() {
 
 on_interrupt() {
   echo ""
-  if [[ -n "$ACTIVE_PID" ]] && kill -0 "$ACTIVE_PID" 2>/dev/null; then
-    echo "Deteniendo la instalacion activa..."
-    kill "$ACTIVE_PID" 2>/dev/null || true
-    wait "$ACTIVE_PID" 2>/dev/null || true
-    ACTIVE_PID=""
+  if [[ -n "$HEARTBEAT_PID" ]] && kill -0 "$HEARTBEAT_PID" 2>/dev/null; then
+    kill "$HEARTBEAT_PID" 2>/dev/null || true
+    wait "$HEARTBEAT_PID" 2>/dev/null || true
+    HEARTBEAT_PID=""
   fi
   echo "Setup interrumpido."
   exit 130
@@ -45,24 +44,34 @@ format_elapsed() {
   printf '%02d:%02d' "$((elapsed / 60))" "$((elapsed % 60))"
 }
 
-wait_with_heartbeat() {
-  local pid="$1"
-  local label="$2"
-  local elapsed=0
+start_heartbeat() {
+  local label="$1"
 
-  ACTIVE_PID="$pid"
-  while kill -0 "$pid" 2>/dev/null; do
-    sleep 15
-    if kill -0 "$pid" 2>/dev/null; then
+  (
+    local elapsed=0
+    while true; do
+      sleep 15
       elapsed=$((elapsed + 15))
-      echo "[$(format_elapsed "$elapsed")] $label sigue en proceso..."
-    fi
-  done
 
-  wait "$pid"
-  local result=$?
-  ACTIVE_PID=""
-  return "$result"
+      # Durante un prompt de password, sudo desactiva echo en el TTY.
+      # No imprimir el heartbeat en ese momento para no ensuciar el prompt.
+      if stty -a </dev/tty 2>/dev/null | grep -Eq '(^|[[:space:]])-echo([[:space:]]|$)'; then
+        continue
+      fi
+
+      echo "[$(format_elapsed "$elapsed")] $label sigue en proceso..."
+    done
+  ) &
+
+  HEARTBEAT_PID=$!
+}
+
+stop_heartbeat() {
+  if [[ -n "$HEARTBEAT_PID" ]] && kill -0 "$HEARTBEAT_PID" 2>/dev/null; then
+    kill "$HEARTBEAT_PID" 2>/dev/null || true
+    wait "$HEARTBEAT_PID" 2>/dev/null || true
+  fi
+  HEARTBEAT_PID=""
 }
 
 check_github() {
@@ -192,20 +201,23 @@ for app in "${CASKS[@]}"; do
 done
 
 # Instalar todos los casks pendientes dentro de UN SOLO proceso de Homebrew.
-# Homebrew invalida el timestamp de sudo al arrancar cada comando; usar un
-# unico proceso evita pedir la contrasena otra vez por cada paquete .pkg.
+# Homebrew se mantiene EN PRIMER PLANO para conservar el control del TTY y
+# permitir que sudo lea la contrasena correctamente. El heartbeat corre aparte.
 if (( ${#MISSING_CASKS[@]} > 0 )); then
   echo ""
   echo "Instalando ${#MISSING_CASKS[@]} aplicaciones pendientes..."
   echo "Las descargas se haran una por una para evitar cortes del CDN."
-  echo "Si Homebrew necesita privilegios, pedira la contrasena una vez"
-  echo "durante este proceso, no una vez por cada aplicacion."
+  echo "Si Homebrew necesita privilegios, escribe la contrasena cuando aparezca Password:."
   echo "[00:00] Instalacion de aplicaciones iniciada."
 
-  "$BREW_BIN" install --cask "${MISSING_CASKS[@]}" --verbose &
-  BREW_INSTALL_PID=$!
+  start_heartbeat "Instalacion de aplicaciones"
 
-  if ! wait_with_heartbeat "$BREW_INSTALL_PID" "Instalacion de aplicaciones"; then
+  "$BREW_BIN" install --cask "${MISSING_CASKS[@]}" --verbose
+  BREW_STATUS=$?
+
+  stop_heartbeat
+
+  if (( BREW_STATUS != 0 )); then
     echo "AVISO: Homebrew reporto al menos un fallo. Revisando pendientes..."
   fi
 
