@@ -29,6 +29,8 @@ Si Xcode Command Line Tools no esta instalado, macOS abrira su instalacion. Cuan
 
 El setup instala las aplicaciones una por una y muestra salida detallada, para que puedas ver exactamente que aplicacion se esta descargando o instalando.
 
+Las descargas grandes de Microsoft usan mas reintentos de Homebrew para tolerar cortes temporales del CDN.
+
 ## Homebrew
 
 El setup agrega Homebrew a `~/.zprofile` y lo carga inmediatamente dentro del proceso de instalacion.
@@ -38,6 +40,19 @@ Si interrumpes el setup y tu Terminal actual todavia no reconoce `brew`, ejecuta
 ```bash
 source ~/.zprofile
 ```
+
+## Si ya clonaste el repositorio antes
+
+Actualiza tu copia local antes de volver a ejecutar el setup:
+
+```bash
+cd ~/pablo-mac-setup
+git pull
+source ~/.zprofile
+./setup-mac.sh
+```
+
+Esto evita ejecutar una version antigua que todavia use `brew bundle`.
 
 ## Configura macOS
 
