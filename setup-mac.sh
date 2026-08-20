@@ -100,6 +100,51 @@ find_brew() {
   return 1
 }
 
+expected_app_path() {
+  local token="${1##*/}"
+
+  case "$token" in
+    nordvpn) echo "/Applications/NordVPN.app" ;;
+    microsoft-word) echo "/Applications/Microsoft Word.app" ;;
+    microsoft-excel) echo "/Applications/Microsoft Excel.app" ;;
+    microsoft-powerpoint) echo "/Applications/Microsoft PowerPoint.app" ;;
+    microsoft-outlook) echo "/Applications/Microsoft Outlook.app" ;;
+    onedrive) echo "/Applications/OneDrive.app" ;;
+    pearcleaner) echo "/Applications/Pearcleaner.app" ;;
+    figma) echo "/Applications/Figma.app" ;;
+    tailscale-app) echo "/Applications/Tailscale.app" ;;
+    chatgpt) echo "/Applications/ChatGPT.app" ;;
+    *) echo "" ;;
+  esac
+}
+
+app_is_present() {
+  local token="$1"
+  local path="$(expected_app_path "$token")"
+  local app_name="${token##*/}"
+
+  if [[ -n "$path" ]]; then
+    [[ -d "$path" ]]
+    return $?
+  fi
+
+  "$BREW_BIN" list --cask "$app_name" >/dev/null 2>&1
+}
+
+run_brew_action() {
+  local action="$1"
+  shift
+  local label="$1"
+  shift
+
+  start_heartbeat "$label"
+  "$BREW_BIN" "$action" --cask "$@" --verbose
+  local status=$?
+  stop_heartbeat
+
+  return "$status"
+}
+
 echo ""
 echo "========================================"
 echo "          PABLO MAC SETUP"
@@ -186,53 +231,87 @@ if "$BREW_BIN" list --formula onedrive-cli >/dev/null 2>&1 && \
   "$BREW_BIN" uninstall --formula onedrive-cli || true
 fi
 
-# Determinar aplicaciones pendientes.
+# Detectar estado real: no basta con que Homebrew tenga el cask registrado.
 MISSING_CASKS=()
+REINSTALL_CASKS=()
 
 echo ""
 echo "Revisando aplicaciones..."
 for app in "${CASKS[@]}"; do
   app_name="${app##*/}"
+  app_path="$(expected_app_path "$app")"
+
+  if app_is_present "$app"; then
+    if [[ -n "$app_path" ]]; then
+      echo "OK: $app_name presente en $app_path"
+    else
+      echo "OK: $app_name instalado."
+    fi
+    continue
+  fi
+
   if "$BREW_BIN" list --cask "$app_name" >/dev/null 2>&1; then
-    echo "OK: $app_name ya esta instalado."
+    echo "REPARAR: $app_name figura instalado en Homebrew pero falta su aplicacion."
+    REINSTALL_CASKS+=("$app")
   else
+    echo "FALTA: $app_name"
     MISSING_CASKS+=("$app")
   fi
 done
 
-# Instalar todos los casks pendientes dentro de UN SOLO proceso de Homebrew.
-# Homebrew se mantiene EN PRIMER PLANO para conservar el control del TTY y
-# permitir que sudo lea la contrasena correctamente. El heartbeat corre aparte.
+# Reparar casks registrados cuyo .app real no existe.
+if (( ${#REINSTALL_CASKS[@]} > 0 )); then
+  echo ""
+  echo "Reinstalando ${#REINSTALL_CASKS[@]} aplicaciones incompletas..."
+  echo "Si aparece Password:, escribe la contrasena normalmente."
+  echo "[00:00] Reparacion de aplicaciones iniciada."
+
+  if ! run_brew_action reinstall "Reparacion de aplicaciones" "${REINSTALL_CASKS[@]}"; then
+    echo "AVISO: Homebrew reporto un fallo durante la reparacion."
+  fi
+fi
+
+# Instalar casks que no estan registrados ni presentes.
 if (( ${#MISSING_CASKS[@]} > 0 )); then
   echo ""
-  echo "Instalando ${#MISSING_CASKS[@]} aplicaciones pendientes..."
+  echo "Instalando ${#MISSING_CASKS[@]} aplicaciones faltantes..."
   echo "Las descargas se haran una por una para evitar cortes del CDN."
-  echo "Si Homebrew necesita privilegios, escribe la contrasena cuando aparezca Password:."
+  echo "Si aparece Password:, escribe la contrasena normalmente."
   echo "[00:00] Instalacion de aplicaciones iniciada."
 
-  start_heartbeat "Instalacion de aplicaciones"
-
-  "$BREW_BIN" install --cask "${MISSING_CASKS[@]}" --verbose
-  BREW_STATUS=$?
-
-  stop_heartbeat
-
-  if (( BREW_STATUS != 0 )); then
-    echo "AVISO: Homebrew reporto al menos un fallo. Revisando pendientes..."
+  if ! run_brew_action install "Instalacion de aplicaciones" "${MISSING_CASKS[@]}"; then
+    echo "AVISO: Homebrew reporto un fallo durante la instalacion."
   fi
+fi
 
-  for app in "${MISSING_CASKS[@]}"; do
-    app_name="${app##*/}"
-    if "$BREW_BIN" list --cask "$app_name" >/dev/null 2>&1; then
-      echo "OK: $app_name instalado."
+if (( ${#REINSTALL_CASKS[@]} == 0 && ${#MISSING_CASKS[@]} == 0 )); then
+  echo "Todas las aplicaciones ya estaban presentes."
+fi
+
+# Verificacion fisica final de todas las aplicaciones.
+echo ""
+echo "Verificando aplicaciones instaladas..."
+FAILED_APPS=()
+
+for app in "${CASKS[@]}"; do
+  app_name="${app##*/}"
+  app_path="$(expected_app_path "$app")"
+
+  if app_is_present "$app"; then
+    if [[ -n "$app_path" ]]; then
+      echo "OK: $app_name -> $app_path"
     else
-      FAILED_APPS+=("$app_name")
+      echo "OK: $app_name"
+    fi
+  else
+    FAILED_APPS+=("$app_name")
+    if [[ -n "$app_path" ]]; then
+      echo "PENDIENTE: $app_name; no existe $app_path"
+    else
       echo "PENDIENTE: $app_name"
     fi
-  done
-else
-  echo "Todas las aplicaciones ya estaban instaladas."
-fi
+  fi
+done
 
 # Finder
 echo ""
@@ -345,15 +424,15 @@ echo "      PABLO MAC SETUP COMPLETADO"
 echo "========================================"
 echo ""
 if (( ${#FAILED_APPS[@]} > 0 )); then
-  echo "No se pudieron instalar:"
+  echo "Aplicaciones que siguen faltando fisicamente:"
   for app in "${FAILED_APPS[@]}"; do
     echo "  - $app"
   done
   echo ""
-  echo "Ejecuta exactamente el mismo comando otra vez:"
-  echo "saltara lo ya instalado y reintentara solo lo pendiente."
+  echo "Ejecuta exactamente el mismo comando otra vez para reintentar."
 else
-  echo "Todas las aplicaciones y preferencias quedaron aplicadas."
+  echo "Todas las aplicaciones fueron verificadas fisicamente en /Applications."
+  echo "Todas las preferencias quedaron aplicadas."
 fi
 
 echo ""
