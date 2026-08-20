@@ -12,6 +12,7 @@ set -o pipefail
 RAW_BASE="https://raw.githubusercontent.com/pablo-antino/pablo-mac-setup/main"
 TEMP_BREWFILE=""
 FAILED_APPS=()
+ACTIVE_PID=""
 
 cleanup() {
   if [[ -n "$TEMP_BREWFILE" && -f "$TEMP_BREWFILE" ]]; then
@@ -21,6 +22,13 @@ cleanup() {
 
 on_interrupt() {
   echo ""
+
+  if [[ -n "$ACTIVE_PID" ]] && kill -0 "$ACTIVE_PID" 2>/dev/null; then
+    echo "Deteniendo la instalacion activa..."
+    kill "$ACTIVE_PID" 2>/dev/null || true
+    wait "$ACTIVE_PID" 2>/dev/null || true
+  fi
+
   echo "Instalacion interrumpida."
   echo "Homebrew queda configurado en ~/.zprofile."
   echo "Para usar brew en esta misma Terminal, ejecuta:"
@@ -92,21 +100,15 @@ if ! find_brew; then
   fi
 fi
 
-# Cargar Homebrew inmediatamente para este proceso.
 eval "$("$BREW_BIN" shellenv)"
 
-# Persistir Homebrew para futuras sesiones de Terminal.
 BREW_PROFILE_LINE="eval \"\$($BREW_BIN shellenv)\""
 touch "$HOME/.zprofile"
 if ! grep -Fqx "$BREW_PROFILE_LINE" "$HOME/.zprofile"; then
   print -r -- "$BREW_PROFILE_LINE" >> "$HOME/.zprofile"
 fi
 
-# Evitar que cada instalacion vuelva a ejecutar brew update.
 export HOMEBREW_NO_AUTO_UPDATE=1
-
-# Reintentar descargas cuando el CDN corta una conexion grande.
-# Homebrew usa 3 reintentos por defecto; para este setup usamos 8.
 export HOMEBREW_CURL_RETRIES=8
 
 echo ""
@@ -152,9 +154,36 @@ if (( ${#CASKS[@]} == 0 )); then
   exit 1
 fi
 
+install_with_heartbeat() {
+  local app="$1"
+  local elapsed=0
+  local minutes=0
+  local seconds=0
+  local result=0
+
+  "$BREW_BIN" install --cask "$app" --verbose &
+  ACTIVE_PID=$!
+
+  while kill -0 "$ACTIVE_PID" 2>/dev/null; do
+    sleep 15
+
+    if kill -0 "$ACTIVE_PID" 2>/dev/null; then
+      elapsed=$((elapsed + 15))
+      minutes=$((elapsed / 60))
+      seconds=$((elapsed % 60))
+      printf '[%02d:%02d] %s sigue descargando/instalando...\n' "$minutes" "$seconds" "$app"
+    fi
+  done
+
+  wait "$ACTIVE_PID"
+  result=$?
+  ACTIVE_PID=""
+  return "$result"
+}
+
 echo ""
 echo "Instalando aplicaciones..."
-echo "Se mostrara el detalle de cada instalacion."
+echo "El estado se actualizara al menos cada 15 segundos."
 
 for app in "${CASKS[@]}"; do
   echo ""
@@ -168,7 +197,9 @@ for app in "${CASKS[@]}"; do
   fi
 
   echo "Instalando $app..."
-  if "$BREW_BIN" install --cask "$app" --verbose; then
+  echo "[00:00] $app iniciado."
+
+  if install_with_heartbeat "$app"; then
     echo "OK: $app instalado."
   else
     echo "AVISO: No se pudo instalar $app. Continuando con las demas apps."
