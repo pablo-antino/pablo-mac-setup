@@ -23,15 +23,16 @@ El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya 
 - Corrige automaticamente `onedrive-cli` si una version anterior lo instalo por error.
 - Detecta que aplicaciones ya estan instaladas.
 - Instala todas las aplicaciones pendientes dentro de un unico proceso de Homebrew.
+- Mantiene Homebrew en primer plano para que los prompts de `sudo` puedan leer la contrasena correctamente.
 - Fuerza las descargas de Homebrew a una por una para reducir fallos con descargas grandes de Microsoft.
-- Muestra un estado al menos cada 15 segundos mientras la instalacion sigue activa.
+- Ejecuta el indicador de progreso en segundo plano y evita imprimirlo mientras `sudo` esta esperando la contrasena.
 - Aplica las preferencias de macOS.
 
 ## Contrasena de administrador
 
 Algunos casks de Homebrew usan instaladores `.pkg` de macOS y necesitan `sudo`.
 
-El setup agrupa todas las aplicaciones pendientes en un unico proceso de Homebrew para evitar iniciar un comando separado por cada aplicacion. Si un instalador necesita privilegios, Homebrew puede pedir la contrasena durante ese proceso; no se intenta desactivar ni modificar la seguridad global de `sudo`.
+Homebrew se ejecuta en primer plano durante la instalacion para conservar el control del Terminal. Cuando aparezca `Password:`, escribe la contrasena normalmente; el indicador de progreso se pausa visualmente mientras el prompt esta activo para no interferir con la entrada.
 
 ## Instala
 
