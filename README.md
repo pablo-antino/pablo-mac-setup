@@ -27,6 +27,18 @@ Si Xcode Command Line Tools no esta instalado, macOS abrira su instalacion. Cuan
 - Tailscale
 - ChatGPT
 
+El setup instala las aplicaciones una por una y muestra salida detallada, para que puedas ver exactamente que aplicacion se esta descargando o instalando.
+
+## Homebrew
+
+El setup agrega Homebrew a `~/.zprofile` y lo carga inmediatamente dentro del proceso de instalacion.
+
+Si interrumpes el setup y tu Terminal actual todavia no reconoce `brew`, ejecuta:
+
+```bash
+source ~/.zprofile
+```
+
 ## Configura macOS
 
 - Finder: extensiones, barra de ruta y barra de estado
@@ -46,6 +58,8 @@ cd pablo-mac-setup
 chmod +x setup-mac.sh
 ./setup-mac.sh
 ```
+
+El script tambien funciona con `curl | zsh`: si no encuentra un `Brewfile` local, lo descarga automaticamente desde este repositorio.
 
 ## Seguridad
 
