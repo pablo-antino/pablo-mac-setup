@@ -18,6 +18,7 @@ El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya 
 
 - Comprueba la conexion a GitHub.
 - Si falta Xcode Command Line Tools, abre su instalador y espera hasta que termine.
+- Pide la contrasena de administrador una sola vez al inicio y mantiene activa esa autorizacion durante todo el setup.
 - Instala y configura Homebrew si hace falta.
 - Descarga siempre el Brewfile actual desde GitHub, para no usar configuraciones locales antiguas.
 - Corrige automaticamente `onedrive-cli` si una version anterior lo instalo por error.
@@ -25,6 +26,7 @@ El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya 
 - Reintenta cada aplicacion hasta 3 veces si falla.
 - Muestra un estado al menos cada 15 segundos mientras una app sigue descargando o instalando.
 - Aplica las preferencias de macOS.
+- Cierra la autorizacion de administrador al finalizar.
 
 ## Instala
 
@@ -49,5 +51,7 @@ El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya 
 - Screenshots: no modifica su ubicacion ni configuracion
 
 ## Seguridad
+
+Homebrew sigue ejecutandose como tu usuario normal. El setup solo mantiene activo el ticket temporal de `sudo` para los instaladores que necesitan privilegios de administrador.
 
 Este repositorio no debe contener contrasenas, tokens, claves API, licencias, certificados privados ni otras credenciales.
