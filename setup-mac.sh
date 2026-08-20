@@ -2,8 +2,8 @@
 
 # ============================================================
 # PABLO MAC SETUP
-# Instala aplicaciones y aplica preferencias personales.
-# No modifica la ubicacion de screenshots.
+# Un solo comando para preparar una Mac nueva.
+# No modifica la ubicacion ni configuracion de screenshots.
 # ============================================================
 
 set -u
@@ -29,47 +29,51 @@ on_interrupt() {
     wait "$ACTIVE_PID" 2>/dev/null || true
   fi
 
-  echo "Instalacion interrumpida."
-  echo "Homebrew queda configurado en ~/.zprofile."
-  echo "Para usar brew en esta misma Terminal, ejecuta:"
-  echo "  source ~/.zprofile"
+  echo "Setup interrumpido."
   exit 130
 }
 
 trap cleanup EXIT
 trap on_interrupt INT TERM
 
-echo ""
-echo "========================================"
-echo "          PABLO MAC SETUP"
-echo "========================================"
-echo ""
+format_elapsed() {
+  local elapsed="$1"
+  printf '%02d:%02d' "$((elapsed / 60))" "$((elapsed % 60))"
+}
 
-# ------------------------------------------------------------
-# 0. Verificar macOS
-# ------------------------------------------------------------
+wait_with_heartbeat() {
+  local pid="$1"
+  local label="$2"
+  local elapsed=0
 
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "ERROR: Este script solo funciona en macOS."
-  exit 1
-fi
+  ACTIVE_PID="$pid"
 
-# ------------------------------------------------------------
-# 1. Xcode Command Line Tools
-# ------------------------------------------------------------
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 15
 
-if ! xcode-select -p >/dev/null 2>&1; then
-  echo "Instalando Xcode Command Line Tools..."
-  xcode-select --install || true
-  echo ""
-  echo "Completa la instalacion de Xcode Command Line Tools"
-  echo "y luego vuelve a ejecutar este mismo setup."
-  exit 0
-fi
+    if kill -0 "$pid" 2>/dev/null; then
+      elapsed=$((elapsed + 15))
+      echo "[$(format_elapsed "$elapsed")] $label sigue en proceso..."
+    fi
+  done
 
-# ------------------------------------------------------------
-# 2. Homebrew
-# ------------------------------------------------------------
+  wait "$pid"
+  local result=$?
+  ACTIVE_PID=""
+  return "$result"
+}
+
+check_github() {
+  echo "Comprobando conexion..."
+
+  if ! curl -fsSIL --connect-timeout 10 --retry 3 --retry-delay 2 https://github.com >/dev/null; then
+    echo "ERROR: No se puede acceder a GitHub."
+    echo "Revisa Wi-Fi/DNS y vuelve a ejecutar el mismo comando."
+    exit 1
+  fi
+
+  echo "OK: conexion disponible."
+}
 
 find_brew() {
   if [[ -x /opt/homebrew/bin/brew ]]; then
@@ -90,9 +94,92 @@ find_brew() {
   return 1
 }
 
+install_cask_once() {
+  local token="$1"
+  "$BREW_BIN" install --cask "$token" --verbose &
+  local pid=$!
+  wait_with_heartbeat "$pid" "$token"
+}
+
+install_cask() {
+  local token="$1"
+  local app_name="${token##*/}"
+  local attempt=1
+  local max_attempts=3
+
+  if "$BREW_BIN" list --cask "$app_name" >/dev/null 2>&1; then
+    echo "OK: $app_name ya esta instalado."
+    return 0
+  fi
+
+  while (( attempt <= max_attempts )); do
+    echo "Intento $attempt/$max_attempts para $app_name"
+    echo "[00:00] $app_name iniciado."
+
+    if install_cask_once "$token"; then
+      echo "OK: $app_name instalado."
+      return 0
+    fi
+
+    if (( attempt < max_attempts )); then
+      echo "AVISO: fallo $app_name. Reintentando..."
+      sleep 5
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  echo "AVISO: no se pudo instalar $app_name despues de $max_attempts intentos."
+  return 1
+}
+
+echo ""
+echo "========================================"
+echo "          PABLO MAC SETUP"
+echo "========================================"
+echo ""
+
+# ------------------------------------------------------------
+# 0. Verificar macOS y conexion
+# ------------------------------------------------------------
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "ERROR: Este script solo funciona en macOS."
+  exit 1
+fi
+
+check_github
+
+# ------------------------------------------------------------
+# 1. Xcode Command Line Tools
+# ------------------------------------------------------------
+
+if ! xcode-select -p >/dev/null 2>&1; then
+  echo ""
+  echo "Xcode Command Line Tools no esta instalado."
+  echo "macOS abrira el instalador. Completa la instalacion;"
+  echo "este mismo comando continuara automaticamente."
+  xcode-select --install 2>/dev/null || true
+
+  elapsed=0
+  while ! xcode-select -p >/dev/null 2>&1; do
+    sleep 15
+    elapsed=$((elapsed + 15))
+    echo "[$(format_elapsed "$elapsed")] Esperando Xcode Command Line Tools..."
+  done
+
+  echo "OK: Xcode Command Line Tools instalado."
+fi
+
+# ------------------------------------------------------------
+# 2. Homebrew
+# ------------------------------------------------------------
+
 if ! find_brew; then
+  echo ""
   echo "Instalando Homebrew..."
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL --retry 3 "$RAW_BASE/../../../../Homebrew/install/HEAD/install.sh" 2>/dev/null)" 2>/dev/null || \
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL --retry 3 https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
   if ! find_brew; then
     echo "ERROR: No se encontro Homebrew despues de la instalacion."
@@ -113,40 +200,26 @@ export HOMEBREW_CURL_RETRIES=8
 
 echo ""
 echo "Homebrew listo: $($BREW_BIN --version | head -n 1)"
-echo "Para usar brew en esta misma Terminal si interrumpes el setup:"
-echo "  source ~/.zprofile"
 
-echo ""
 echo "Actualizando Homebrew..."
-"$BREW_BIN" update
-
-# ------------------------------------------------------------
-# 3. Localizar Brewfile
-# ------------------------------------------------------------
-
-SCRIPT_DIR="${0:A:h}"
-
-if [[ -f "$SCRIPT_DIR/Brewfile" ]]; then
-  BREWFILE="$SCRIPT_DIR/Brewfile"
-elif [[ -f "$PWD/Brewfile" ]]; then
-  BREWFILE="$PWD/Brewfile"
-else
-  echo ""
-  echo "Brewfile no encontrado localmente. Descargando desde GitHub..."
-  TEMP_BREWFILE="$(mktemp /tmp/pablo-brewfile.XXXXXX)"
-
-  if ! curl -fsSL "$RAW_BASE/Brewfile" -o "$TEMP_BREWFILE"; then
-    echo "ERROR: No se pudo descargar el Brewfile desde GitHub."
-    exit 1
-  fi
-
-  BREWFILE="$TEMP_BREWFILE"
+if ! "$BREW_BIN" update; then
+  echo "AVISO: brew update fallo. Continuare con la version instalada."
 fi
 
 # ------------------------------------------------------------
-# 4. Instalar aplicaciones una por una
+# 3. Descargar SIEMPRE el Brewfile actual
 # ------------------------------------------------------------
 
+echo ""
+echo "Descargando configuracion actual desde GitHub..."
+TEMP_BREWFILE="$(mktemp /tmp/pablo-brewfile.XXXXXX)"
+
+if ! curl -fsSL --retry 5 --retry-delay 2 "$RAW_BASE/Brewfile" -o "$TEMP_BREWFILE"; then
+  echo "ERROR: No se pudo descargar el Brewfile actual."
+  exit 1
+fi
+
+BREWFILE="$TEMP_BREWFILE"
 CASKS=("${(@f)$(sed -n 's/^[[:space:]]*cask "\([^"]*\)".*/\1/p' "$BREWFILE")}")
 
 if (( ${#CASKS[@]} == 0 )); then
@@ -154,61 +227,39 @@ if (( ${#CASKS[@]} == 0 )); then
   exit 1
 fi
 
-install_with_heartbeat() {
-  local app="$1"
-  local elapsed=0
-  local minutes=0
-  local seconds=0
-  local result=0
+# ------------------------------------------------------------
+# 4. Corregir OneDrive de versiones antiguas
+# ------------------------------------------------------------
 
-  "$BREW_BIN" install --cask "$app" --verbose &
-  ACTIVE_PID=$!
+if "$BREW_BIN" list --formula onedrive-cli >/dev/null 2>&1 && \
+   ! "$BREW_BIN" list --cask onedrive >/dev/null 2>&1; then
+  echo ""
+  echo "Corrigiendo instalacion anterior de OneDrive..."
+  "$BREW_BIN" uninstall --formula onedrive-cli || true
+fi
 
-  while kill -0 "$ACTIVE_PID" 2>/dev/null; do
-    sleep 15
-
-    if kill -0 "$ACTIVE_PID" 2>/dev/null; then
-      elapsed=$((elapsed + 15))
-      minutes=$((elapsed / 60))
-      seconds=$((elapsed % 60))
-      printf '[%02d:%02d] %s sigue descargando/instalando...\n' "$minutes" "$seconds" "$app"
-    fi
-  done
-
-  wait "$ACTIVE_PID"
-  result=$?
-  ACTIVE_PID=""
-  return "$result"
-}
+# ------------------------------------------------------------
+# 5. Instalar aplicaciones una por una
+# ------------------------------------------------------------
 
 echo ""
-echo "Instalando aplicaciones..."
+echo "Instalando aplicaciones una por una..."
 echo "El estado se actualizara al menos cada 15 segundos."
 
 for app in "${CASKS[@]}"; do
+  app_name="${app##*/}"
   echo ""
   echo "----------------------------------------"
-  echo "Procesando: $app"
+  echo "Procesando: $app_name"
   echo "----------------------------------------"
 
-  if "$BREW_BIN" list --cask "$app" >/dev/null 2>&1; then
-    echo "OK: $app ya esta instalado."
-    continue
-  fi
-
-  echo "Instalando $app..."
-  echo "[00:00] $app iniciado."
-
-  if install_with_heartbeat "$app"; then
-    echo "OK: $app instalado."
-  else
-    echo "AVISO: No se pudo instalar $app. Continuando con las demas apps."
-    FAILED_APPS+=("$app")
+  if ! install_cask "$app"; then
+    FAILED_APPS+=("$app_name")
   fi
 done
 
 # ------------------------------------------------------------
-# 5. Finder
+# 6. Finder
 # ------------------------------------------------------------
 
 echo ""
@@ -218,14 +269,14 @@ defaults write com.apple.finder ShowPathbar -bool true
 defaults write com.apple.finder ShowStatusBar -bool true
 
 # ------------------------------------------------------------
-# 6. Dock
+# 7. Dock
 # ------------------------------------------------------------
 
 echo "Configurando Dock..."
 defaults write com.apple.dock autohide -bool true
 
 # ------------------------------------------------------------
-# 7. Barra de menus
+# 8. Barra de menus
 # ------------------------------------------------------------
 
 echo "Configurando barra de menus..."
@@ -233,7 +284,7 @@ defaults write NSGlobalDomain _HIHideMenuBar -bool true
 defaults write NSGlobalDomain AppleMenuBarVisibleInFullscreen -bool false
 
 # ------------------------------------------------------------
-# 8. Trackpad
+# 9. Trackpad
 # ------------------------------------------------------------
 
 echo "Configurando trackpad..."
@@ -245,7 +296,7 @@ defaults -currentHost write NSGlobalDomain com.apple.trackpad.trackpadCornerClic
 defaults -currentHost write NSGlobalDomain com.apple.trackpad.enableSecondaryClick -bool true
 
 # ------------------------------------------------------------
-# 9. Teclado: U.S. International
+# 10. Teclado: U.S. International
 # ------------------------------------------------------------
 
 echo "Configurando teclado U.S. International..."
@@ -260,35 +311,20 @@ cat > "$TMP_SOURCE" <<'OBJC'
 int main(void) {
     @autoreleasepool {
         CFArrayRef sources = TISCreateInputSourceList(NULL, true);
-        if (!sources) {
-            fprintf(stderr, "No se pudo obtener la lista de input sources.\n");
-            return 1;
-        }
+        if (!sources) return 1;
 
         TISInputSourceRef target = NULL;
         CFIndex count = CFArrayGetCount(sources);
 
         for (CFIndex i = 0; i < count; i++) {
-            TISInputSourceRef source =
-                (TISInputSourceRef)CFArrayGetValueAtIndex(sources, i);
-
-            CFStringRef name =
-                (CFStringRef)TISGetInputSourceProperty(
-                    source,
-                    kTISPropertyLocalizedName
-                );
-
-            if (!name) {
-                continue;
-            }
+            TISInputSourceRef source = (TISInputSourceRef)CFArrayGetValueAtIndex(sources, i);
+            CFStringRef name = (CFStringRef)TISGetInputSourceProperty(source, kTISPropertyLocalizedName);
+            if (!name) continue;
 
             NSString *sourceName = (__bridge NSString *)name;
-
             BOOL matches =
-                [sourceName rangeOfString:@"U.S. International"
-                                  options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                [sourceName rangeOfString:@"US International"
-                                  options:NSCaseInsensitiveSearch].location != NSNotFound;
+                [sourceName rangeOfString:@"U.S. International" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [sourceName rangeOfString:@"US International" options:NSCaseInsensitiveSearch].location != NSNotFound;
 
             if (matches) {
                 target = source;
@@ -297,42 +333,20 @@ int main(void) {
         }
 
         if (!target) {
-            fprintf(stderr, "No se encontro U.S. International en este macOS.\n");
             CFRelease(sources);
             return 2;
         }
 
         OSStatus enableStatus = TISEnableInputSource(target);
         OSStatus selectStatus = TISSelectInputSource(target);
-
-        CFStringRef selectedName =
-            (CFStringRef)TISGetInputSourceProperty(
-                target,
-                kTISPropertyLocalizedName
-            );
-
-        if (selectedName) {
-            NSLog(@"Input source seleccionado: %@", (__bridge NSString *)selectedName);
-        }
-
         CFRelease(sources);
 
-        if (enableStatus != noErr || selectStatus != noErr) {
-            fprintf(stderr, "No se pudo activar o seleccionar el input source.\n");
-            return 3;
-        }
-
-        return 0;
+        return (enableStatus == noErr && selectStatus == noErr) ? 0 : 3;
     }
 }
 OBJC
 
-if clang -fobjc-arc \
-  -framework Foundation \
-  -framework Carbon \
-  "$TMP_SOURCE" \
-  -o "$TMP_BINARY" >/dev/null 2>&1; then
-
+if clang -fobjc-arc -framework Foundation -framework Carbon "$TMP_SOURCE" -o "$TMP_BINARY" >/dev/null 2>&1; then
   if "$TMP_BINARY"; then
     echo "OK: U.S. International seleccionado."
   else
@@ -346,7 +360,7 @@ fi
 rm -f "$TMP_SOURCE" "$TMP_BINARY"
 
 # ------------------------------------------------------------
-# 10. Recargar preferencias
+# 11. Aplicar y limpiar
 # ------------------------------------------------------------
 
 echo ""
@@ -356,12 +370,7 @@ killall Dock 2>/dev/null || true
 killall SystemUIServer 2>/dev/null || true
 killall cfprefsd 2>/dev/null || true
 
-# ------------------------------------------------------------
-# 11. Limpieza
-# ------------------------------------------------------------
-
-echo "Limpiando Homebrew..."
-"$BREW_BIN" cleanup
+"$BREW_BIN" cleanup || true
 
 # ------------------------------------------------------------
 # 12. Resumen
@@ -372,37 +381,19 @@ echo "========================================"
 echo "      PABLO MAC SETUP COMPLETADO"
 echo "========================================"
 echo ""
-echo "Configuracion aplicada:"
-echo "  - Finder: extensiones + barra de ruta + barra de estado"
-echo "  - Dock: ocultar automaticamente"
-echo "  - Barra de menus: ocultar automaticamente siempre"
-echo "  - Trackpad: click secundario abajo a la derecha"
-echo "  - Teclado: U.S. International"
-echo "  - Screenshots: SIN CAMBIOS"
-echo ""
 
 if (( ${#FAILED_APPS[@]} > 0 )); then
-  echo "Aplicaciones que no se pudieron instalar:"
+  echo "No se pudieron instalar:"
   for app in "${FAILED_APPS[@]}"; do
     echo "  - $app"
   done
   echo ""
+  echo "Puedes ejecutar exactamente el mismo comando otra vez;"
+  echo "saltara lo ya instalado y reintentara solo lo pendiente."
 else
-  echo "Todas las aplicaciones se instalaron correctamente."
-  echo ""
+  echo "Todas las aplicaciones y preferencias quedaron aplicadas."
 fi
 
-echo "Despues inicia sesion donde corresponda:"
-echo "  - Microsoft 365 / Outlook / OneDrive"
-echo "  - NordVPN"
-echo "  - Tailscale"
-echo "  - Figma"
-echo "  - ChatGPT"
 echo ""
-echo "Homebrew quedo agregado a ~/.zprofile."
-echo "Si esta Terminal aun no reconoce brew, ejecuta:"
-echo "  source ~/.zprofile"
-echo ""
-echo "Si algun ajuste de trackpad o barra de menus no aparece"
-echo "inmediatamente, cierra sesion o reinicia la Mac."
+echo "Screenshots: SIN CAMBIOS"
 echo ""
