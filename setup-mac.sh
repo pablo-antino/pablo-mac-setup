@@ -13,8 +13,24 @@ RAW_BASE="https://raw.githubusercontent.com/pablo-antino/pablo-mac-setup/main"
 TEMP_BREWFILE=""
 FAILED_APPS=()
 ACTIVE_PID=""
+SUDO_KEEPALIVE_PID=""
+SUDO_READY=0
 
 cleanup() {
+  if [[ -n "$ACTIVE_PID" ]] && kill -0 "$ACTIVE_PID" 2>/dev/null; then
+    kill "$ACTIVE_PID" 2>/dev/null || true
+    wait "$ACTIVE_PID" 2>/dev/null || true
+  fi
+
+  if [[ -n "$SUDO_KEEPALIVE_PID" ]] && kill -0 "$SUDO_KEEPALIVE_PID" 2>/dev/null; then
+    kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+    wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+  fi
+
+  if (( SUDO_READY == 1 )); then
+    sudo -k 2>/dev/null || true
+  fi
+
   if [[ -n "$TEMP_BREWFILE" && -f "$TEMP_BREWFILE" ]]; then
     rm -f "$TEMP_BREWFILE"
   fi
@@ -26,6 +42,7 @@ on_interrupt() {
     echo "Deteniendo la instalacion activa..."
     kill "$ACTIVE_PID" 2>/dev/null || true
     wait "$ACTIVE_PID" 2>/dev/null || true
+    ACTIVE_PID=""
   fi
   echo "Setup interrumpido."
   exit 130
@@ -83,6 +100,30 @@ find_brew() {
     return 0
   fi
   return 1
+}
+
+start_sudo_session() {
+  echo ""
+  echo "Autorizacion de administrador"
+  echo "Ingresa tu contrasena una sola vez para toda la instalacion."
+
+  if ! sudo -v; then
+    echo "ERROR: No se pudo obtener autorizacion de administrador."
+    exit 1
+  fi
+
+  SUDO_READY=1
+  local parent_pid=$$
+
+  (
+    while kill -0 "$parent_pid" 2>/dev/null; do
+      sudo -n true 2>/dev/null || exit
+      sleep 45
+    done
+  ) &
+  SUDO_KEEPALIVE_PID=$!
+
+  echo "OK: autorizacion activa para todo el setup."
 }
 
 install_cask_once() {
@@ -151,6 +192,9 @@ if ! xcode-select -p >/dev/null 2>&1; then
   done
   echo "OK: Xcode Command Line Tools instalado."
 fi
+
+# Pedir privilegios una sola vez y mantener el ticket sudo activo.
+start_sudo_session
 
 # Homebrew
 if ! find_brew; then
