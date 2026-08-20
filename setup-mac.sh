@@ -13,22 +13,11 @@ RAW_BASE="https://raw.githubusercontent.com/pablo-antino/pablo-mac-setup/main"
 TEMP_BREWFILE=""
 FAILED_APPS=()
 ACTIVE_PID=""
-SUDO_KEEPALIVE_PID=""
-SUDO_READY=0
 
 cleanup() {
   if [[ -n "$ACTIVE_PID" ]] && kill -0 "$ACTIVE_PID" 2>/dev/null; then
     kill "$ACTIVE_PID" 2>/dev/null || true
     wait "$ACTIVE_PID" 2>/dev/null || true
-  fi
-
-  if [[ -n "$SUDO_KEEPALIVE_PID" ]] && kill -0 "$SUDO_KEEPALIVE_PID" 2>/dev/null; then
-    kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-    wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-  fi
-
-  if (( SUDO_READY == 1 )); then
-    sudo -k 2>/dev/null || true
   fi
 
   if [[ -n "$TEMP_BREWFILE" && -f "$TEMP_BREWFILE" ]]; then
@@ -102,68 +91,6 @@ find_brew() {
   return 1
 }
 
-start_sudo_session() {
-  echo ""
-  echo "Autorizacion de administrador"
-  echo "Ingresa tu contrasena una sola vez para toda la instalacion."
-
-  if ! sudo -v; then
-    echo "ERROR: No se pudo obtener autorizacion de administrador."
-    exit 1
-  fi
-
-  SUDO_READY=1
-  local parent_pid=$$
-
-  (
-    while kill -0 "$parent_pid" 2>/dev/null; do
-      sudo -n true 2>/dev/null || exit
-      sleep 45
-    done
-  ) &
-  SUDO_KEEPALIVE_PID=$!
-
-  echo "OK: autorizacion activa para todo el setup."
-}
-
-install_cask_once() {
-  local token="$1"
-  "$BREW_BIN" install --cask "$token" --verbose &
-  local pid=$!
-  wait_with_heartbeat "$pid" "${token##*/}"
-}
-
-install_cask() {
-  local token="$1"
-  local app_name="${token##*/}"
-  local attempt=1
-  local max_attempts=3
-
-  if "$BREW_BIN" list --cask "$app_name" >/dev/null 2>&1; then
-    echo "OK: $app_name ya esta instalado."
-    return 0
-  fi
-
-  while (( attempt <= max_attempts )); do
-    echo "Intento $attempt/$max_attempts para $app_name"
-    echo "[00:00] $app_name iniciado."
-
-    if install_cask_once "$token"; then
-      echo "OK: $app_name instalado."
-      return 0
-    fi
-
-    if (( attempt < max_attempts )); then
-      echo "AVISO: fallo $app_name. Reintentando..."
-      sleep 5
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  echo "AVISO: no se pudo instalar $app_name despues de $max_attempts intentos."
-  return 1
-}
-
 echo ""
 echo "========================================"
 echo "          PABLO MAC SETUP"
@@ -193,9 +120,6 @@ if ! xcode-select -p >/dev/null 2>&1; then
   echo "OK: Xcode Command Line Tools instalado."
 fi
 
-# Pedir privilegios una sola vez y mantener el ticket sudo activo.
-start_sudo_session
-
 # Homebrew
 if ! find_brew; then
   echo ""
@@ -204,7 +128,7 @@ if ! find_brew; then
     echo "ERROR: No se pudo descargar el instalador de Homebrew."
     exit 1
   }
-  NONINTERACTIVE=1 /bin/bash -c "$HOMEBREW_INSTALLER"
+  /bin/bash -c "$HOMEBREW_INSTALLER"
 
   if ! find_brew; then
     echo "ERROR: No se encontro Homebrew despues de la instalacion."
@@ -221,6 +145,7 @@ fi
 
 export HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_CURL_RETRIES=8
+export HOMEBREW_DOWNLOAD_CONCURRENCY=1
 
 echo ""
 echo "Homebrew listo: $($BREW_BIN --version | head -n 1)"
@@ -252,21 +177,50 @@ if "$BREW_BIN" list --formula onedrive-cli >/dev/null 2>&1 && \
   "$BREW_BIN" uninstall --formula onedrive-cli || true
 fi
 
-# Aplicaciones
-echo ""
-echo "Instalando aplicaciones una por una..."
-echo "El estado se actualizara al menos cada 15 segundos."
+# Determinar aplicaciones pendientes.
+MISSING_CASKS=()
 
+echo ""
+echo "Revisando aplicaciones..."
 for app in "${CASKS[@]}"; do
   app_name="${app##*/}"
-  echo ""
-  echo "----------------------------------------"
-  echo "Procesando: $app_name"
-  echo "----------------------------------------"
-  if ! install_cask "$app"; then
-    FAILED_APPS+=("$app_name")
+  if "$BREW_BIN" list --cask "$app_name" >/dev/null 2>&1; then
+    echo "OK: $app_name ya esta instalado."
+  else
+    MISSING_CASKS+=("$app")
   fi
 done
+
+# Instalar todos los casks pendientes dentro de UN SOLO proceso de Homebrew.
+# Homebrew invalida el timestamp de sudo al arrancar cada comando; usar un
+# unico proceso evita pedir la contrasena otra vez por cada paquete .pkg.
+if (( ${#MISSING_CASKS[@]} > 0 )); then
+  echo ""
+  echo "Instalando ${#MISSING_CASKS[@]} aplicaciones pendientes..."
+  echo "Las descargas se haran una por una para evitar cortes del CDN."
+  echo "Si Homebrew necesita privilegios, pedira la contrasena una vez"
+  echo "durante este proceso, no una vez por cada aplicacion."
+  echo "[00:00] Instalacion de aplicaciones iniciada."
+
+  "$BREW_BIN" install --cask "${MISSING_CASKS[@]}" --verbose &
+  BREW_INSTALL_PID=$!
+
+  if ! wait_with_heartbeat "$BREW_INSTALL_PID" "Instalacion de aplicaciones"; then
+    echo "AVISO: Homebrew reporto al menos un fallo. Revisando pendientes..."
+  fi
+
+  for app in "${MISSING_CASKS[@]}"; do
+    app_name="${app##*/}"
+    if "$BREW_BIN" list --cask "$app_name" >/dev/null 2>&1; then
+      echo "OK: $app_name instalado."
+    else
+      FAILED_APPS+=("$app_name")
+      echo "PENDIENTE: $app_name"
+    fi
+  done
+else
+  echo "Todas las aplicaciones ya estaban instaladas."
+fi
 
 # Finder
 echo ""
