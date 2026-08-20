@@ -68,7 +68,7 @@ Si falta una de estas rutas aunque Homebrew tenga el cask registrado, el setup l
 
 ## Configura macOS
 
-- Finder: extensiones, barra de ruta y barra de estado
+- Finder: oculta extensiones conocidas para mantener nombres de apps limpios, y muestra barra de ruta y barra de estado
 - Dock: ocultar automaticamente
 - Barra de menus: ocultar automaticamente siempre
 - Trackpad: clic secundario en la esquina inferior derecha
