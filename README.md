@@ -18,15 +18,20 @@ El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya 
 
 - Comprueba la conexion a GitHub.
 - Si falta Xcode Command Line Tools, abre su instalador y espera hasta que termine.
-- Pide la contrasena de administrador una sola vez al inicio y mantiene activa esa autorizacion durante todo el setup.
 - Instala y configura Homebrew si hace falta.
 - Descarga siempre el Brewfile actual desde GitHub, para no usar configuraciones locales antiguas.
 - Corrige automaticamente `onedrive-cli` si una version anterior lo instalo por error.
-- Instala las aplicaciones una por una.
-- Reintenta cada aplicacion hasta 3 veces si falla.
-- Muestra un estado al menos cada 15 segundos mientras una app sigue descargando o instalando.
+- Detecta que aplicaciones ya estan instaladas.
+- Instala todas las aplicaciones pendientes dentro de un unico proceso de Homebrew.
+- Fuerza las descargas de Homebrew a una por una para reducir fallos con descargas grandes de Microsoft.
+- Muestra un estado al menos cada 15 segundos mientras la instalacion sigue activa.
 - Aplica las preferencias de macOS.
-- Cierra la autorizacion de administrador al finalizar.
+
+## Contrasena de administrador
+
+Algunos casks de Homebrew usan instaladores `.pkg` de macOS y necesitan `sudo`.
+
+El setup agrupa todas las aplicaciones pendientes en un unico proceso de Homebrew para evitar iniciar un comando separado por cada aplicacion. Si un instalador necesita privilegios, Homebrew puede pedir la contrasena durante ese proceso; no se intenta desactivar ni modificar la seguridad global de `sudo`.
 
 ## Instala
 
@@ -52,6 +57,6 @@ El mismo comando sirve tambien para volver a ejecutar el setup: salta lo que ya 
 
 ## Seguridad
 
-Homebrew sigue ejecutandose como tu usuario normal. El setup solo mantiene activo el ticket temporal de `sudo` para los instaladores que necesitan privilegios de administrador.
+Homebrew se ejecuta como tu usuario normal. El setup no crea reglas `NOPASSWD`, no modifica `sudoers` y no guarda contrasenas.
 
 Este repositorio no debe contener contrasenas, tokens, claves API, licencias, certificados privados ni otras credenciales.
